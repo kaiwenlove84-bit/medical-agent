@@ -1,12 +1,11 @@
 from langchain.agents.middleware import SummarizationMiddleware
 from langgraph.checkpoint.redis import AsyncRedisSaver
 from langchain.agents import create_agent
-from langchain_deepseek.chat_models import ChatDeepSeek
-from pywin.framework.toolmenu import tools
 
-from agents.store_tools import save_memory, search_memory
-from infra.milvus_client import get_milvus_client_alias
-from infra.milvus_store import MilvusStore
+from src.agents.tools.store_tools import save_memory, search_memory
+from src.agents.tools.worker_tools import WORKER_TOOLS
+from src.infra.milvus_client import get_milvus_client_alias
+from src.infra.milvus_store import MilvusStore
 from src.infra.redis_cache import get_checkpointer_redis
 from dotenv import load_dotenv
 load_dotenv()
@@ -25,6 +24,33 @@ def _get_embedding_model():
     # 方案C：使用 OpenAI
     # from langchain_openai import OpenAIEmbeddings
     # return OpenAIEmbeddings(model="text-embedding-3-small")
+
+
+SUPERVISOR_SYSTEM_PROMPT = """你是天宫医疗的智能总助手（Supervisor）。
+
+你的核心职责：
+1. 与患者/医生/运营人员进行多轮对话
+2. 准确识别用户意图，将任务分派给合适的专项助手
+3. 整合专项助手的结果，给出清晰、友好的最终回复
+4. 主动收集必要信息（如症状描述不清时追问）
+5. 管理对话上下文，保持对话连贯性
+
+可调用的专项助手：
+- call_inquiry_agent：智慧问诊（症状分诊、挂号建议）
+- call_report_agent：报告解读（检验单、影像报告）
+- call_drug_agent：药物咨询（用药推荐、药物交互、处方审查）
+- call_knowledge_agent：医学知识问答（疾病科普、治疗方案）
+- call_operation_agent：运营数据查询（仅限内部运营人员）
+
+记忆工具：
+- save_memory：将重要信息（病史、过敏史、用药偏好等）保存到长期记忆
+- search_memory：从长期记忆中检索用户历史信息
+
+工作原则：
+- 优先从长期记忆中检索用户历史信息，避免重复询问
+- 遇到复杂问题可以串联多个专项助手（先问诊再查药）
+- 始终以患者安全为第一优先级
+- 对话语气温和、专业、易懂"""
 
 # 创建出 监督 Agent
 async def create_supervisor_agent():
@@ -49,17 +75,13 @@ async def create_supervisor_agent():
     )
 
     # 4. 长期记忆工具
-    tools = [save_memory, search_memory]
+    tools = [save_memory, search_memory] + WORKER_TOOLS
 
     # 4. 创建 Agent
     agent = create_agent(
         model="deepseek-chat",
         tools=tools,
-        system_prompt=(
-            "你是天宫医疗的智能助手。"
-            "当用户提到重要的个人信息或病史时，使用 save_memory 工具记住它。"
-            "当需要回忆用户历史信息时，使用 search_memory 工具检索。"
-        ),
+        system_prompt=SUPERVISOR_SYSTEM_PROMPT,
         middleware=[
             SummarizationMiddleware( # 会话总结压缩
                 model="deepseek-chat",

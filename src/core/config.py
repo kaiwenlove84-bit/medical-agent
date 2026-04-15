@@ -61,3 +61,6 @@ class Settings(BaseSettings):
 @lru_cache  # lru 把对象实例保存到内存中。这是一种单例的实现
 def get_settings() -> Settings:
     return Settings()
+
+def get_llm():
+    return "deepseek-chat"
